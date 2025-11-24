@@ -1,15 +1,18 @@
 [
   {
     "id": "568756214176",
-    "url": "https://www.youtube.com/watch?v=AMRGmAh2NTk"
+    "url": "https://www.youtube.com/watch?v=AMRGmAh2NTk",
+    "thumbnail": "https://img.youtube.com/vi/AMRGmAh2NTk/maxresdefault.jpg"
   },
   {
     "id": "123456789012",
-    "url": "https://www.youtube.com/watch?v=mqL5SG49TWc"
+    "url": "https://www.youtube.com/watch?v=mqL5SG49TWc",
+    "thumbnail": "https://img.youtube.com/vi/mqL5SG49TWc/maxresdefault.jpg"
   },
   {
     "id": "098765431234",
-    "url": "https://www.youtube.com/watch?v=jkN4wsb3t3I"
+    "url": "https://www.youtube.com/watch?v=jkN4wsb3t3I",
+    "thumbnail": "https://img.youtube.com/vi/jkN4wsb3t3I/maxresdefault.jpg"
   }
 ]
 
