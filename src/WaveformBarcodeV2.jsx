@@ -10,6 +10,12 @@ const NUM_BARS = 23;
 
 const GRAY_ENCODE = [0, 1, 3, 2, 6, 7, 5, 4];
 const GRAY_DECODE = [0, 1, 3, 2, 7, 6, 4, 5];
+const BAR_THEME = {
+  background: "#504B81",
+  primaryBar: "#F6ECFF",
+  referenceBar: "#C7B1FF",
+  frame: "#3F3A66",
+};
 
 const crc8 = (data) => {
   let crc = 0;
@@ -198,7 +204,7 @@ function WaveformBarcodeV2() {
       (BAR_WIDTH + SPACING) * result.length - SPACING + PADDING * 2;
     canvas.width = totalWidth;
     canvas.height = CANVAS_HEIGHT;
-    ctx.fillStyle = "#FFFFFF";
+    ctx.fillStyle = BAR_THEME.background;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     const centerY = canvas.height / 2;
     let x = PADDING;
@@ -206,7 +212,7 @@ function WaveformBarcodeV2() {
       const barHeight = (height + 1) * UNIT_HEIGHT;
       const y = centerY - barHeight / 2;
       const isRef = i === 0 || i === 11 || i === result.length - 1;
-      ctx.fillStyle = isRef ? "#666666" : "#000000";
+      ctx.fillStyle = isRef ? BAR_THEME.referenceBar : BAR_THEME.primaryBar;
       drawRoundedRect(ctx, x, y, BAR_WIDTH, barHeight, BAR_WIDTH / 2);
       x += BAR_WIDTH + SPACING;
     });
@@ -315,7 +321,92 @@ function WaveformBarcodeV2() {
     }
   };
 
-  const captureAndDecode = useCallback(() => {
+  const decodeCanvas = (canvas) => {
+    const ctx = canvas.getContext("2d");
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const data = imageData.data;
+    const getBrightness = (x, y) => {
+      if (x < 0 || x >= canvas.width || y < 0 || y >= canvas.height) return 255;
+      const i = (Math.floor(y) * canvas.width + Math.floor(x)) * 4;
+      return (data[i] + data[i + 1] + data[i + 2]) / 3;
+    };
+
+    const sampleStepX = Math.max(1, Math.floor(canvas.width / 80));
+    const sampleStepY = Math.max(1, Math.floor(canvas.height / 80));
+    const samples = [];
+    for (let y = 0; y < canvas.height; y += sampleStepY) {
+      for (let x = 0; x < canvas.width; x += sampleStepX) {
+        samples.push(getBrightness(x, y));
+      }
+    }
+
+    if (samples.length === 0) return { error: "Empty image" };
+    const sortedSamples = [...samples].sort((a, b) => a - b);
+    const backgroundBrightness =
+      sortedSamples[Math.floor(sortedSamples.length / 2)];
+    const minBrightness = sortedSamples[0];
+    const maxBrightness = sortedSamples[sortedSamples.length - 1];
+    const lightDiff = maxBrightness - backgroundBrightness;
+    const darkDiff = backgroundBrightness - minBrightness;
+    const detectLightBars = lightDiff > darkDiff;
+    const contrast = detectLightBars ? lightDiff : darkDiff;
+    if (contrast < 10)
+      return { error: "Barcode contrast too low to detect" };
+    const thresholdBase = detectLightBars
+      ? backgroundBrightness + contrast * 0.45
+      : backgroundBrightness - contrast * 0.45;
+    const threshold = Math.max(0, Math.min(255, thresholdBase));
+    const isBarPixel = (x, y) => {
+      const brightness = getBrightness(x, y);
+      return detectLightBars
+        ? brightness >= threshold
+        : brightness <= threshold;
+    };
+    const scanLines = [0.4, 0.45, 0.5, 0.55, 0.6].map((r) =>
+      Math.floor(canvas.height * r)
+    );
+    let bestBars = [];
+    for (const centerY of scanLines) {
+      const bars = [];
+      let inBar = false,
+        barStart = 0;
+      for (let x = 0; x < canvas.width; x++) {
+        const inWave = isBarPixel(x, centerY);
+        if (inWave && !inBar) {
+          inBar = true;
+          barStart = x;
+        } else if (!inWave && inBar) {
+          inBar = false;
+          const barWidth = x - barStart;
+          if (barWidth >= 8) {
+            const centerX = barStart + barWidth / 2;
+            let topY = centerY,
+              bottomY = centerY;
+            while (topY > 0 && isBarPixel(centerX, topY - 1)) topY--;
+            while (
+              bottomY < canvas.height - 1 &&
+              isBarPixel(centerX, bottomY + 1)
+            )
+              bottomY++;
+            bars.push({ centerX, height: bottomY - topY + 1 });
+          }
+        }
+      }
+      if (bars.length > bestBars.length) bestBars = bars;
+    }
+    if (bestBars.length < 15)
+      return { error: `Found ${bestBars.length} bars, need 15+` };
+    const maxHeight = Math.max(...bestBars.map((b) => b.height));
+    const unitH = maxHeight / 8;
+    const detectedHeights = bestBars.map((bar) => {
+      const level = Math.round(bar.height / unitH) - 1;
+      return Math.max(0, Math.min(7, level));
+    });
+    while (detectedHeights.length < NUM_BARS) detectedHeights.push(0);
+    return decodeFromHeights(detectedHeights.slice(0, NUM_BARS));
+  };
+
+  const captureAndDecode = () => {
     const video = videoRef.current;
     const canvas = scanCanvasRef.current;
     if (!video || !canvas) {
@@ -435,7 +526,10 @@ function WaveformBarcodeV2() {
             </button>
           </div>
           {error && <p className="text-red-500 text-sm">{error}</p>}
-          <div className="bg-gray-50 p-4 rounded-lg flex justify-center">
+          <div
+            className="p-4 rounded-lg flex justify-center"
+            style={{ backgroundColor: BAR_THEME.frame }}
+          >
             <canvas ref={canvasRef} className="max-w-full" />
           </div>
           <button
