@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { Link } from "react-router-dom";
 import songLinks from "./songLinks.json";
+import SongLinkCard from "./SongLinkCard";
 
 const BAR_WIDTH = 24;
 const SPACING = 4;
@@ -84,11 +85,16 @@ const decodeFromHeights = (heights) => {
 };
 
 export const urlMap = new Map();
-songLinks.forEach(({ id, url }) => {
+export const songMetaMap = new Map();
+
+songLinks.forEach(({ id, url, thumbnail }) => {
   const numericId = Number(id);
-  if (!Number.isNaN(numericId)) {
-    urlMap.set(numericId, url);
-  }
+  if (Number.isNaN(numericId) || !url) return;
+  urlMap.set(numericId, url);
+  songMetaMap.set(numericId, {
+    url,
+    thumbnail: thumbnail || null,
+  });
 });
 
 export const decodeCanvas = (canvas) => {
@@ -187,6 +193,7 @@ function WaveformBarcodeV2() {
   const [urlInput, setUrlInput] = useState("");
   const [mappedId, setMappedId] = useState("");
   const [mappedUrl, setMappedUrl] = useState("");
+  const [mappedSong, setMappedSong] = useState(null);
   const [cameraReady, setCameraReady] = useState(false);
   const streamRef = useRef(null);
 
@@ -255,6 +262,7 @@ function WaveformBarcodeV2() {
     setError("");
     setDecoded(null);
     setMappedUrl("");
+    setMappedSong(null);
     setCameraReady(false);
 
     try {
@@ -319,12 +327,14 @@ function WaveformBarcodeV2() {
     const url = urlInput.trim();
     const id = Math.floor(Math.random() * 1e10);
     urlMap.set(id, url);
+    songMetaMap.set(id, { url, thumbnail: null });
     setMappedId(String(id));
     setMediaRef(String(id));
     const h = encodeToHeights(String(id));
     if (h) {
       drawHeights(h);
       setError("");
+      setMappedSong(null);
     }
   };
 
@@ -349,13 +359,25 @@ function WaveformBarcodeV2() {
     if (result.error) {
       setError(result.error);
       setDecoded(null);
+      setMappedSong(null);
+      setMappedUrl("");
       return;
     }
     setDecoded(result);
     setError("");
     if (result.valid) {
       const url = urlMap.get(result.data);
-      if (url) setMappedUrl(url);
+      const songMeta = songMetaMap.get(result.data);
+      if (songMeta) {
+        setMappedSong(songMeta);
+        setMappedUrl(songMeta.url);
+      } else if (url) {
+        setMappedSong(null);
+        setMappedUrl(url);
+      } else {
+        setMappedSong(null);
+        setMappedUrl("");
+      }
       stopScanning();
     }
   }, [stopScanning]);
@@ -540,19 +562,18 @@ function WaveformBarcodeV2() {
                   : "bg-yellow-50 border-yellow-200"
               }`}
             >
-              <p className="text-sm mb-1">
-                {decoded.valid ? "✅ Valid!" : "⚠️ CRC Error"}
-              </p>
-              <p className="font-mono text-2xl">{decoded.data}</p>
-              {mappedUrl && (
-                <a
-                  href={mappedUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-blue-600 underline text-sm block mt-2"
-                >
-                  Here's the link to the song.
-                </a>
+              {decoded.valid ? (
+                mappedSong || mappedUrl ? (
+                  <SongLinkCard song={mappedSong} fallbackUrl={mappedUrl} />
+                ) : (
+                  <p className="text-sm text-gray-600">
+                    No saved song link for this code.
+                  </p>
+                )
+              ) : (
+                <p className="text-sm text-gray-700">
+                  ⚠️ CRC Error — please hold the barcode steady and try again.
+                </p>
               )}
             </div>
           )}

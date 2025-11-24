@@ -1,18 +1,21 @@
 import React, { useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { decodeCanvas, urlMap } from "./WaveformBarcodeV2";
+import { decodeCanvas, urlMap, songMetaMap } from "./WaveformBarcodeV2";
+import SongLinkCard from "./SongLinkCard";
 
 function UploadScanner() {
   const canvasRef = useRef(null);
   const [error, setError] = useState("");
   const [decoded, setDecoded] = useState(null);
   const [mappedUrl, setMappedUrl] = useState("");
+  const [mappedSong, setMappedSong] = useState(null);
 
   const handleUploadImage = (file) => {
     if (!file) return;
     setError("");
     setDecoded(null);
     setMappedUrl("");
+    setMappedSong(null);
 
     const canvas = canvasRef.current;
     const ctx = canvas.getContext("2d");
@@ -31,18 +34,24 @@ function UploadScanner() {
         setError(result.error);
         setDecoded(null);
         setMappedUrl("");
+        setMappedSong(null);
         return;
       }
 
       setDecoded(result);
       if (result.valid) {
-        const url = urlMap.get(result.data);
-        if (url) {
-          setMappedUrl(url);
-          window.open(url, "_blank");
+        const songMeta = songMetaMap.get(result.data);
+        if (songMeta) {
+          setMappedSong(songMeta);
+          setMappedUrl(songMeta.url);
         } else {
-          setMappedUrl("");
+          const url = urlMap.get(result.data) || "";
+          setMappedSong(null);
+          setMappedUrl(url);
         }
+      } else {
+        setMappedSong(null);
+        setMappedUrl("");
       }
     };
 
@@ -94,19 +103,18 @@ function UploadScanner() {
                 : "bg-yellow-50 border-yellow-200"
             }`}
           >
-            <p className="text-sm mb-1">
-              {decoded.valid ? "✅ Valid payload" : "⚠️ CRC Error"}
-            </p>
-            <p className="font-mono text-2xl">{decoded.data}</p>
-            {mappedUrl && (
-              <a
-                href={mappedUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-blue-600 underline text-sm block mt-2"
-              >
-                Here's the link to the song.
-              </a>
+            {decoded.valid ? (
+              mappedSong || mappedUrl ? (
+                <SongLinkCard song={mappedSong} fallbackUrl={mappedUrl} />
+              ) : (
+                <p className="text-sm text-gray-600">
+                  No saved song link for this code.
+                </p>
+              )
+            ) : (
+              <p className="text-sm text-gray-700">
+                ⚠️ CRC Error — please try with a clearer image.
+              </p>
             )}
           </div>
         )}
