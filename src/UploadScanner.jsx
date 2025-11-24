@@ -105,7 +105,7 @@ function UploadScanner() {
                 rel="noopener noreferrer"
                 className="text-blue-600 underline text-sm block mt-2"
               >
-                Open: {mappedUrl}
+                Here's the link to the song.
               </a>
             )}
           </div>

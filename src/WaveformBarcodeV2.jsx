@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { Link } from "react-router-dom";
+import songLinks from "./songLinks.json";
 
 const BAR_WIDTH = 24;
 const SPACING = 4;
@@ -83,6 +84,12 @@ const decodeFromHeights = (heights) => {
 };
 
 export const urlMap = new Map();
+songLinks.forEach(({ id, url }) => {
+  const numericId = Number(id);
+  if (!Number.isNaN(numericId)) {
+    urlMap.set(numericId, url);
+  }
+});
 
 export const decodeCanvas = (canvas) => {
   const ctx = canvas.getContext("2d");
@@ -544,7 +551,7 @@ function WaveformBarcodeV2() {
                   rel="noopener noreferrer"
                   className="text-blue-600 underline text-sm block mt-2"
                 >
-                  Open: {mappedUrl}
+                  Here's the link to the song.
                 </a>
               )}
             </div>
