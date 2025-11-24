@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
+import { Link } from "react-router-dom";
 
 const BAR_WIDTH = 24;
 const SPACING = 4;
@@ -75,7 +76,90 @@ const decodeFromHeights = (heights) => {
   return { data, valid: true };
 };
 
-const urlMap = new Map();
+export const urlMap = new Map();
+
+export const decodeCanvas = (canvas) => {
+  const ctx = canvas.getContext("2d");
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const data = imageData.data;
+  const getBrightness = (x, y) => {
+    if (x < 0 || x >= canvas.width || y < 0 || y >= canvas.height) return 255;
+    const i = (Math.floor(y) * canvas.width + Math.floor(x)) * 4;
+    return (data[i] + data[i + 1] + data[i + 2]) / 3;
+  };
+
+  const sampleStepX = Math.max(1, Math.floor(canvas.width / 80));
+  const sampleStepY = Math.max(1, Math.floor(canvas.height / 80));
+  const samples = [];
+  for (let y = 0; y < canvas.height; y += sampleStepY) {
+    for (let x = 0; x < canvas.width; x += sampleStepX) {
+      samples.push(getBrightness(x, y));
+    }
+  }
+
+  if (samples.length === 0) return { error: "Empty image" };
+  const sortedSamples = [...samples].sort((a, b) => a - b);
+  const backgroundBrightness =
+    sortedSamples[Math.floor(sortedSamples.length / 2)];
+  const minBrightness = sortedSamples[0];
+  const maxBrightness = sortedSamples[sortedSamples.length - 1];
+  const lightDiff = maxBrightness - backgroundBrightness;
+  const darkDiff = backgroundBrightness - minBrightness;
+  const detectLightBars = lightDiff > darkDiff;
+  const contrast = detectLightBars ? lightDiff : darkDiff;
+  if (contrast < 10) return { error: "Barcode contrast too low to detect" };
+  const thresholdBase = detectLightBars
+    ? backgroundBrightness + contrast * 0.45
+    : backgroundBrightness - contrast * 0.45;
+  const threshold = Math.max(0, Math.min(255, thresholdBase));
+  const isBarPixel = (x, y) => {
+    const brightness = getBrightness(x, y);
+    return detectLightBars ? brightness >= threshold : brightness <= threshold;
+  };
+
+  const scanLines = [0.4, 0.45, 0.5, 0.55, 0.6].map((r) =>
+    Math.floor(canvas.height * r)
+  );
+  let bestBars = [];
+  for (const centerY of scanLines) {
+    const bars = [];
+    let inBar = false,
+      barStart = 0;
+    for (let x = 0; x < canvas.width; x++) {
+      const inWave = isBarPixel(x, centerY);
+      if (inWave && !inBar) {
+        inBar = true;
+        barStart = x;
+      } else if (!inWave && inBar) {
+        inBar = false;
+        const barWidth = x - barStart;
+        if (barWidth >= 8) {
+          const centerX = barStart + barWidth / 2;
+          let topY = centerY,
+            bottomY = centerY;
+          while (topY > 0 && isBarPixel(centerX, topY - 1)) topY--;
+          while (
+            bottomY < canvas.height - 1 &&
+            isBarPixel(centerX, bottomY + 1)
+          )
+            bottomY++;
+          bars.push({ centerX, height: bottomY - topY + 1 });
+        }
+      }
+    }
+    if (bars.length > bestBars.length) bestBars = bars;
+  }
+  if (bestBars.length < 15)
+    return { error: `Found ${bestBars.length} bars, need 15+` };
+  const maxHeight = Math.max(...bestBars.map((b) => b.height));
+  const unitH = maxHeight / 8;
+  const detectedHeights = bestBars.map((bar) => {
+    const level = Math.round(bar.height / unitH) - 1;
+    return Math.max(0, Math.min(7, level));
+  });
+  while (detectedHeights.length < NUM_BARS) detectedHeights.push(0);
+  return decodeFromHeights(detectedHeights.slice(0, NUM_BARS));
+};
 
 function WaveformBarcodeV2() {
   const [mode, setMode] = useState("generate");
@@ -87,7 +171,6 @@ function WaveformBarcodeV2() {
   const videoRef = useRef(null);
   const scanCanvasRef = useRef(null);
   const [scanning, setScanning] = useState(false);
-  const [scanMethod, setScanMethod] = useState("camera");
   const [urlInput, setUrlInput] = useState("");
   const [mappedId, setMappedId] = useState("");
   const [mappedUrl, setMappedUrl] = useState("");
@@ -158,6 +241,7 @@ function WaveformBarcodeV2() {
   const startScanning = async () => {
     setError("");
     setDecoded(null);
+    setMappedUrl("");
     setCameraReady(false);
 
     try {
@@ -231,63 +315,17 @@ function WaveformBarcodeV2() {
     }
   };
 
-  const decodeCanvas = (canvas) => {
-    const ctx = canvas.getContext("2d");
-    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    const data = imageData.data;
-    const getBrightness = (x, y) => {
-      if (x < 0 || x >= canvas.width || y < 0 || y >= canvas.height) return 255;
-      const i = (Math.floor(y) * canvas.width + Math.floor(x)) * 4;
-      return (data[i] + data[i + 1] + data[i + 2]) / 3;
-    };
-    const isBlack = (x, y) => getBrightness(x, y) < 128;
-    const scanLines = [0.4, 0.45, 0.5, 0.55, 0.6].map((r) =>
-      Math.floor(canvas.height * r)
-    );
-    let bestBars = [];
-    for (const centerY of scanLines) {
-      const bars = [];
-      let inBar = false,
-        barStart = 0;
-      for (let x = 0; x < canvas.width; x++) {
-        const black = isBlack(x, centerY);
-        if (black && !inBar) {
-          inBar = true;
-          barStart = x;
-        } else if (!black && inBar) {
-          inBar = false;
-          const barWidth = x - barStart;
-          if (barWidth >= 8) {
-            const centerX = barStart + barWidth / 2;
-            let topY = centerY,
-              bottomY = centerY;
-            while (topY > 0 && isBlack(centerX, topY - 1)) topY--;
-            while (bottomY < canvas.height - 1 && isBlack(centerX, bottomY + 1))
-              bottomY++;
-            bars.push({ centerX, height: bottomY - topY + 1 });
-          }
-        }
-      }
-      if (bars.length > bestBars.length) bestBars = bars;
-    }
-    if (bestBars.length < 15)
-      return { error: `Found ${bestBars.length} bars, need 15+` };
-    const maxHeight = Math.max(...bestBars.map((b) => b.height));
-    const unitH = maxHeight / 8;
-    const detectedHeights = bestBars.map((bar) => {
-      const level = Math.round(bar.height / unitH) - 1;
-      return Math.max(0, Math.min(7, level));
-    });
-    while (detectedHeights.length < NUM_BARS) detectedHeights.push(0);
-    return decodeFromHeights(detectedHeights.slice(0, NUM_BARS));
-  };
-
-  const captureAndDecode = () => {
+  const captureAndDecode = useCallback(() => {
     const video = videoRef.current;
     const canvas = scanCanvasRef.current;
-    if (!video || !canvas) return setError("Video not ready");
-    if (!video.videoWidth || !video.videoHeight)
-      return setError("Camera not ready - wait a moment");
+    if (!video || !canvas) {
+      setError("Video not ready");
+      return;
+    }
+    if (!video.videoWidth || !video.videoHeight) {
+      setError("Camera not ready - wait a moment");
+      return;
+    }
 
     const ctx = canvas.getContext("2d");
     canvas.width = video.videoWidth;
@@ -298,46 +336,24 @@ function WaveformBarcodeV2() {
     if (result.error) {
       setError(result.error);
       setDecoded(null);
-    } else {
-      setDecoded(result);
-      setError("");
-      if (result.valid) {
-        const url = urlMap.get(result.data);
-        if (url) setMappedUrl(url);
-        stopScanning();
-      }
+      return;
     }
-  };
+    setDecoded(result);
+    setError("");
+    if (result.valid) {
+      const url = urlMap.get(result.data);
+      if (url) setMappedUrl(url);
+      stopScanning();
+    }
+  }, [stopScanning]);
 
-  const handleUploadImage = (file) => {
-    if (!file) return;
-    const canvas = scanCanvasRef.current;
-    const ctx = canvas.getContext("2d");
-    const img = new Image();
-    img.onload = () => {
-      const scale = Math.min(1280 / img.width, 720 / img.height, 1);
-      canvas.width = Math.floor(img.width * scale);
-      canvas.height = Math.floor(img.height * scale);
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      const result = decodeCanvas(canvas);
-      if (result.error) {
-        setError(result.error);
-        setDecoded(null);
-      } else {
-        setDecoded(result);
-        setError("");
-        if (result.valid) {
-          const url = urlMap.get(result.data);
-          if (url) {
-            setMappedUrl(url);
-            window.open(url, "_blank");
-          }
-        }
-      }
-    };
-    img.onerror = () => setError("Failed to load image");
-    img.src = URL.createObjectURL(file);
-  };
+  useEffect(() => {
+    if (!scanning || !cameraReady) return;
+    const intervalId = setInterval(() => {
+      captureAndDecode();
+    }, 1200);
+    return () => clearInterval(intervalId);
+  }, [scanning, cameraReady, captureAndDecode]);
 
   const downloadBarcode = () => {
     const link = document.createElement("a");
@@ -437,117 +453,62 @@ function WaveformBarcodeV2() {
       )}
 
       {mode === "scan" && (
-        <div className="space-y-4">
-          <div className="flex gap-2">
+        <div className="space-y-4 min-h-[80vh] flex flex-col">
+          {!scanning ? (
             <button
-              onClick={() => {
-                setScanMethod("camera");
-                stopScanning();
-              }}
-              className={`flex-1 py-2 rounded ${
-                scanMethod === "camera" ? "bg-black text-white" : "bg-gray-200"
-              }`}
+              onClick={startScanning}
+              className="w-full py-3 bg-green-600 text-white rounded-lg font-medium"
             >
-              Camera
+              Start Camera Scan
             </button>
-            <button
-              onClick={() => {
-                setScanMethod("upload");
-                stopScanning();
-              }}
-              className={`flex-1 py-2 rounded ${
-                scanMethod === "upload" ? "bg-black text-white" : "bg-gray-200"
-              }`}
-            >
-              Upload
-            </button>
-          </div>
-
-          {scanMethod === "camera" && (
-            <>
-              {!scanning ? (
-                <button
-                  onClick={startScanning}
-                  className="w-full py-3 bg-green-600 text-white rounded-lg font-medium"
-                >
-                  Start Camera
-                </button>
-              ) : (
-                <div className="space-y-3">
-                  <div
-                    className="relative bg-gray-900 rounded-lg overflow-hidden"
-                    style={{ minHeight: 300 }}
-                  >
-                    {/* Video element - visible, not hidden */}
-                    <video
-                      ref={videoRef}
-                      autoPlay
-                      playsInline
-                      muted
-                      onCanPlay={handleVideoCanPlay}
-                      style={{
-                        width: "100%",
-                        height: "auto",
-                        minHeight: 300,
-                        display: "block",
-                        objectFit: "cover",
-                      }}
-                    />
-
-                    {/* Loading overlay */}
-                    {!cameraReady && (
-                      <div className="absolute inset-0 flex items-center justify-center bg-gray-900">
-                        <div className="text-white text-center">
-                          <div className="animate-spin w-8 h-8 border-4 border-white border-t-transparent rounded-full mx-auto mb-2"></div>
-                          <p>Starting camera...</p>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Scan guide overlay */}
-                    {cameraReady && (
-                      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                        <div
-                          className="border-2 border-green-400 w-4/5 h-20 rounded-lg shadow-lg"
-                          style={{ boxShadow: "0 0 0 9999px rgba(0,0,0,0.3)" }}
-                        ></div>
-                      </div>
-                    )}
+          ) : (
+            <div className="flex-1 flex flex-col gap-3">
+              <div className="relative flex-1 bg-gray-900 rounded-2xl overflow-hidden min-h-[60vh]">
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  onCanPlay={handleVideoCanPlay}
+                  style={{
+                    width: "100%",
+                    height: "100%",
+                    display: "block",
+                    objectFit: "cover",
+                  }}
+                />
+                {!cameraReady && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-gray-900">
+                    <div className="text-white text-center space-y-3">
+                      <div className="animate-spin w-8 h-8 border-4 border-white border-t-transparent rounded-full mx-auto"></div>
+                      <p className="text-sm tracking-wide uppercase">
+                        Starting camera…
+                      </p>
+                    </div>
                   </div>
-
-                  <div className="flex gap-2">
-                    <button
-                      onClick={captureAndDecode}
-                      disabled={!cameraReady}
-                      className={`flex-1 py-3 rounded-lg text-white ${
-                        cameraReady ? "bg-blue-600" : "bg-blue-300"
-                      }`}
-                    >
-                      {cameraReady ? "Capture & Decode" : "Waiting..."}
-                    </button>
-                    <button
-                      onClick={stopScanning}
-                      className="px-4 py-3 bg-red-600 text-white rounded-lg"
-                    >
-                      Stop
-                    </button>
-                  </div>
-                </div>
-              )}
-            </>
-          )}
-
-          {scanMethod === "upload" && (
-            <div className="space-y-2">
-              <input
-                type="file"
-                accept="image/*"
-                onChange={(e) => handleUploadImage(e.target.files?.[0])}
-                className="w-full p-2 border rounded"
-              />
-              <p className="text-xs text-gray-500">
-                Upload a barcode image to decode
-              </p>
+                )}
+                {cameraReady && (
+                  <>
+                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                      <div
+                        className="border-2 border-purple-300/80 w-4/5 max-w-xl h-24 rounded-2xl shadow-[0_0_60px_rgba(0,0,0,0.6)]"
+                        style={{ boxShadow: "0 0 0 9999px rgba(0,0,0,0.35)" }}
+                      ></div>
+                    </div>
+                    <div className="absolute bottom-6 inset-x-0 text-center">
+                      <p className="text-white text-sm font-medium tracking-wide">
+                        Auto decoding… hold the barcode steady
+                      </p>
+                    </div>
+                  </>
+                )}
+              </div>
+              <button
+                onClick={stopScanning}
+                className="w-full py-3 bg-red-600 text-white rounded-lg"
+              >
+                Stop Camera
+              </button>
             </div>
           )}
 
@@ -579,6 +540,16 @@ function WaveformBarcodeV2() {
               )}
             </div>
           )}
+
+          <p className="text-xs text-center text-gray-500">
+            Need to decode an image instead?{" "}
+            <Link
+              to="/scan/upload"
+              className="text-indigo-600 font-medium underline"
+            >
+              Go to /scan/upload ↗
+            </Link>
+          </p>
         </div>
       )}
 

@@ -1,14 +1,15 @@
 import "./App.css";
+import { Navigate, Route, Routes } from "react-router-dom";
+import UploadScanner from "./UploadScanner";
 import WaveformBarcodeV2 from "./WaveformBarcodeV2";
 
 function App() {
   return (
-    <>
-      {/* Waveform barcode component */}
-      <div style={{ marginTop: 24 }}>
-        <WaveformBarcodeV2 />
-      </div>
-    </>
+    <Routes>
+      <Route path="/" element={<WaveformBarcodeV2 />} />
+      <Route path="/scan/upload" element={<UploadScanner />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
   );
 }
 
