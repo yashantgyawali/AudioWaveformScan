@@ -220,6 +220,15 @@ function WaveformBarcodeV2() {
   const focusTrackRef = useRef(null);
   const trackCapabilitiesRef = useRef(null);
   const autoStartDoneRef = useRef(false);
+  const [isMobileView, setIsMobileView] = useState(
+   typeof window !== "undefined" ? window.innerWidth < 640 : false
+ );
+ 
+ useEffect(() => {
+   const onResize = () => setIsMobileView(window.innerWidth < 640);
+   window.addEventListener("resize", onResize);
+   return () => window.removeEventListener("resize", onResize);
+ }, []);
 
   const drawRoundedRect = (ctx, x, y, w, h, r) => {
     const radius = Math.min(r, w / 2, h / 2);
@@ -581,11 +590,20 @@ function WaveformBarcodeV2() {
       )}
 
       {mode === "scan" && (
-        <div className="space-y-4 min-h-[80vh] flex flex-col">
-          <div className="flex-1 flex flex-col gap-3">
+        // removed the large min-height so the scanner area stays compact and avoids page scroll
+        <div className="space-y-4 flex flex-col min-h-0">
+           <div className="flex-1 flex flex-col gap-3">
             <div
-              className="relative flex-1 bg-gray-900 rounded-2xl overflow-hidden"
-              style={{ height: "min(45vh, 360px)" }} /* horizontal / compact preview */
+              className="relative flex-1 rounded-2xl overflow-hidden bg-transparent"
+              style={
+                isMobileView
+                  ? {
+                      width: "100%",
+                      aspectRatio: "1 / 1", // square on phones
+                      maxHeight: "320px",
+                    }
+                  : { height: "140px" } // reduced desktop preview height
+              }
             >
               <video
                 ref={videoRef}
@@ -598,48 +616,23 @@ function WaveformBarcodeV2() {
                   width: "100%",
                   height: "100%",
                   display: "block",
-                  objectFit: "contain", // show full frame, avoid tall cropping
+                  objectFit: "cover", // crop to keep preview compact
                   cursor: "crosshair",
                 }}
               />
 
-              {/* Scanner guidelines overlay — purely visual, does not affect capture */}
-              <div
-                className="absolute left-4 top-4 bg-white/10 text-white p-3 rounded-lg max-w-xs backdrop-blur-sm"
-                aria-hidden="true"
-              >
-                <h4 className="font-semibold text-sm mb-1">Scanner Tips</h4>
-                <ul className="text-xs list-disc pl-4 space-y-1">
-                  <li>Center the barcode inside the purple frame.</li>
-                  <li>Hold your phone steady — auto-decode runs every 1.2s.</li>
-                  <li>Rotate device so the bars are roughly vertical.</li>
-                  <li className="mt-1 text-xs">Tip: tap the preview to trigger focus (if supported)</li>
-                </ul>
-              </div>
-
+              {/* START: minimal starting indicator (transparent background) */}
               {!cameraReady && (
-                <div className="absolute inset-0 flex items-center justify-center bg-gray-900">
-                  <div className="text-white text-center space-y-3">
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                  <div className="text-white text-center space-y-2">
                     <div className="animate-spin w-8 h-8 border-4 border-white border-t-transparent rounded-full mx-auto"></div>
-                    <p className="text-sm tracking-wide uppercase">Starting camera…</p>
+                    <p className="text-xs tracking-wide uppercase">Starting camera…</p>
                   </div>
                 </div>
               )}
-              {cameraReady && (
-                <>
-                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                    <div
-                      className="border-2 border-purple-300/80 w-4/5 max-w-xl h-24 rounded-2xl shadow-[0_0_60px_rgba(0,0,0,0.6)]"
-                      style={{ boxShadow: "0 0 0 9999px rgba(0,0,0,0.35)" }}
-                    ></div>
-                  </div>
-                  <div className="absolute bottom-6 inset-x-0 text-center">
-                    <p className="text-white text-sm font-medium tracking-wide">
-                      Auto decoding… hold the barcode steady
-                    </p>
-                  </div>
-                </>
-              )}
+              {/* END: minimal starting indicator */}
+
+              {/* Removed: scanner tips, purple guide frame and bottom status to leave only the preview */}
             </div>
 
             <button onClick={stopScanning} className="w-full py-3 bg-red-600 text-white rounded-lg">
