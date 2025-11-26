@@ -291,7 +291,7 @@ function WaveformBarcodeV2() {
     if (mode !== "scan") stopScanning();
   }, [mode, stopScanning]);
 
-  const startScanning = async () => {
+  const startScanning = useCallback(async () => {
     setError("");
     setDecoded(null);
     setMappedUrl("");
@@ -326,9 +326,15 @@ function WaveformBarcodeV2() {
       setError(`Camera error: ${err.message || "Unknown"}. Check permissions.`);
       setScanning(false);
     }
-  };
+  }, []);
 
-  // Handle video element events
+  // Auto-start camera when on the scan route
+  useEffect(() => {
+    if (mode === "scan" && !scanning) {
+      startScanning();
+    }
+  }, [mode, scanning, startScanning]);
+
   const handleVideoCanPlay = () => {
     const video = videoRef.current;
     if (video) {
@@ -439,22 +445,8 @@ function WaveformBarcodeV2() {
         With CRC, Gray Code & Permutation
       </p>
 
-      <div className="flex gap-2 mb-4 justify-center">
-        {["generate", "scan", "info"].map((m) => (
-          <button
-            key={m}
-            onClick={() => {
-              const path = m === "scan" ? "/" : `/${m}`;
-              navigate(path);
-            }}
-            className={`px-4 py-2 rounded-lg font-medium capitalize ${
-              mode === m ? "bg-black text-white" : "bg-gray-200"
-            }`}
-          >
-            {m}
-          </button>
-        ))}
-      </div>
+      {/* navigation removed — direct URLs /generate and /info still work */}
+      <div className="h-2" />
 
       {mode === "generate" && (
         <div className="space-y-4">
@@ -525,77 +517,64 @@ function WaveformBarcodeV2() {
 
       {mode === "scan" && (
         <div className="space-y-4 min-h-[80vh] flex flex-col">
-          {!scanning ? (
-            <button
-              onClick={startScanning}
-              className="w-full py-3 bg-green-600 text-white rounded-lg font-medium"
-            >
-              Start Camera Scan
-            </button>
-          ) : (
-            <div className="flex-1 flex flex-col gap-3">
-              <div className="relative flex-1 bg-gray-900 rounded-2xl overflow-hidden min-h-[60vh]">
-                <video
-                  ref={videoRef}
-                  autoPlay
-                  playsInline
-                  muted
-                  onCanPlay={handleVideoCanPlay}
-                  style={{
-                    width: "100%",
-                    height: "100%",
-                    display: "block",
-                    objectFit: "cover",
-                  }}
-                />
+          <div className="flex-1 flex flex-col gap-3">
+            <div className="relative flex-1 bg-gray-900 rounded-2xl overflow-hidden min-h-[60vh]">
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                muted
+                onCanPlay={handleVideoCanPlay}
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  display: "block",
+                  objectFit: "cover",
+                }}
+              />
 
-                {/* Scanner guidelines overlay — purely visual, does not affect capture */}
-                <div
-                  className="absolute left-4 top-4 bg-white/10 text-white p-3 rounded-lg max-w-xs backdrop-blur-sm"
-                  aria-hidden="true"
-                >
-                  <h4 className="font-semibold text-sm mb-1">Scanner Tips</h4>
-                  <ul className="text-xs list-disc pl-4 space-y-1">
-                    <li>Center the barcode inside the purple frame.</li>
-                    <li>Hold your phone steady — auto-decode runs every 1.2s.</li>
-                    <li>Rotate device so the bars are roughly vertical.</li>
-                  </ul>
-                </div>
-
-                {!cameraReady && (
-                  <div className="absolute inset-0 flex items-center justify-center bg-gray-900">
-                    <div className="text-white text-center space-y-3">
-                      <div className="animate-spin w-8 h-8 border-4 border-white border-t-transparent rounded-full mx-auto"></div>
-                      <p className="text-sm tracking-wide uppercase">
-                        Starting camera…
-                      </p>
-                    </div>
-                  </div>
-                )}
-                {cameraReady && (
-                  <>
-                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                      <div
-                        className="border-2 border-purple-300/80 w-4/5 max-w-xl h-24 rounded-2xl shadow-[0_0_60px_rgba(0,0,0,0.6)]"
-                        style={{ boxShadow: "0 0 0 9999px rgba(0,0,0,0.35)" }}
-                      ></div>
-                    </div>
-                    <div className="absolute bottom-6 inset-x-0 text-center">
-                      <p className="text-white text-sm font-medium tracking-wide">
-                        Auto decoding… hold the barcode steady
-                      </p>
-                    </div>
-                  </>
-                )}
-              </div>
-              <button
-                onClick={stopScanning}
-                className="w-full py-3 bg-red-600 text-white rounded-lg"
+              {/* Scanner guidelines overlay — purely visual, does not affect capture */}
+              <div
+                className="absolute left-4 top-4 bg-white/10 text-white p-3 rounded-lg max-w-xs backdrop-blur-sm"
+                aria-hidden="true"
               >
-                Stop Camera
-              </button>
+                <h4 className="font-semibold text-sm mb-1">Scanner Tips</h4>
+                <ul className="text-xs list-disc pl-4 space-y-1">
+                  <li>Center the barcode inside the purple frame.</li>
+                  <li>Hold your phone steady — auto-decode runs every 1.2s.</li>
+                  <li>Rotate device so the bars are roughly vertical.</li>
+                </ul>
+              </div>
+
+              {!cameraReady && (
+                <div className="absolute inset-0 flex items-center justify-center bg-gray-900">
+                  <div className="text-white text-center space-y-3">
+                    <div className="animate-spin w-8 h-8 border-4 border-white border-t-transparent rounded-full mx-auto"></div>
+                    <p className="text-sm tracking-wide uppercase">Starting camera…</p>
+                  </div>
+                </div>
+              )}
+              {cameraReady && (
+                <>
+                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                    <div
+                      className="border-2 border-purple-300/80 w-4/5 max-w-xl h-24 rounded-2xl shadow-[0_0_60px_rgba(0,0,0,0.6)]"
+                      style={{ boxShadow: "0 0 0 9999px rgba(0,0,0,0.35)" }}
+                    ></div>
+                  </div>
+                  <div className="absolute bottom-6 inset-x-0 text-center">
+                    <p className="text-white text-sm font-medium tracking-wide">
+                      Auto decoding… hold the barcode steady
+                    </p>
+                  </div>
+                </>
+              )}
             </div>
-          )}
+
+            <button onClick={stopScanning} className="w-full py-3 bg-red-600 text-white rounded-lg">
+              Stop Camera
+            </button>
+          </div>
 
           <canvas ref={scanCanvasRef} style={{ display: "none" }} />
 
