@@ -217,6 +217,9 @@ function WaveformBarcodeV2() {
   const [cameraReady, setCameraReady] = useState(false);
   const [smallBarcodeMode, setSmallBarcodeMode] = useState(false);
   const streamRef = useRef(null);
+  const focusTrackRef = useRef(null);
+  const trackCapabilitiesRef = useRef(null);
+  const autoStartDoneRef = useRef(false);
 
   const drawRoundedRect = (ctx, x, y, w, h, r) => {
     const radius = Math.min(r, w / 2, h / 2);
@@ -315,10 +318,33 @@ function WaveformBarcodeV2() {
       setScanning(true);
 
       // IMPORTANT: Set srcObject AFTER state update so video element exists
-      setTimeout(() => {
+      setTimeout(async () => {
         const video = videoRef.current;
         if (video && stream) {
           video.srcObject = stream;
+
+          // try to enable continuous/autofocus if supported
+          try {
+            const [track] = stream.getVideoTracks();
+            focusTrackRef.current = track;
+            const caps = track.getCapabilities ? track.getCapabilities() : {};
+            trackCapabilitiesRef.current = caps;
+            // prefer continuous or auto focus if available
+            if (caps.focusMode && Array.isArray(caps.focusMode)) {
+              const want = caps.focusMode.includes("continuous")
+                ? "continuous"
+                : caps.focusMode.includes("auto")
+                ? "auto"
+                : null;
+              if (want) {
+                await track.applyConstraints({ advanced: [{ focusMode: want }] });
+              }
+            }
+          } catch (e) {
+            // ignore if device/browser doesn't support focus controls
+            console.debug("Focus setup not supported:", e);
+          }
+
         }
       }, 50);
     } catch (err) {
@@ -327,11 +353,48 @@ function WaveformBarcodeV2() {
       setScanning(false);
     }
   }, []);
+  
+  // Tap-to-focus: best-effort using pointsOfInterest / focusMode / focusDistance
+  const handleVideoFocusTap = useCallback(
+    async (e) => {
+      try {
+        const video = videoRef.current;
+        const track = focusTrackRef.current;
+        const caps = trackCapabilitiesRef.current || {};
+        if (!video || !track) return;
+        const rect = video.getBoundingClientRect();
+        const nx = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+        const ny = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+
+        // pointsOfInterest (Safari-like)
+        if (caps.pointsOfInterest) {
+          await track.applyConstraints({ advanced: [{ pointsOfInterest: [{ x: nx, y: ny }] }] });
+          return;
+        }
+
+        // single-shot focus modes
+        if (caps.focusMode && caps.focusMode.includes("single-shot")) {
+          await track.applyConstraints({ advanced: [{ focusMode: "single-shot" }] });
+          return;
+        }
+
+        // fallback: if focusDistance available, set to nearest supported value
+        if (typeof caps.focusDistance === "object" && caps.focusDistance.min != null) {
+          await track.applyConstraints({ advanced: [{ focusDistance: caps.focusDistance.min }] });
+          return;
+        }
+      } catch (err) {
+        console.debug("Tap-to-focus not supported:", err);
+      }
+    },
+    []
+  );
 
   // Auto-start camera when on the scan route
   useEffect(() => {
-    if (mode === "scan" && !scanning) {
+    if (mode === "scan" && !scanning && !autoStartDoneRef.current) {
       startScanning();
+      autoStartDoneRef.current = true; // don't auto-restart after stop/success
     }
   }, [mode, scanning, startScanning]);
 
@@ -405,6 +468,8 @@ function WaveformBarcodeV2() {
     setDecoded(result);
     setError("");
     if (result.valid) {
+      // Ensure we don't auto-restart after a successful decode
+      autoStartDoneRef.current = true;
       const url = urlMap.get(result.data);
       const songMeta = songMetaMap.get(result.data);
       if (songMeta) {
@@ -518,18 +583,23 @@ function WaveformBarcodeV2() {
       {mode === "scan" && (
         <div className="space-y-4 min-h-[80vh] flex flex-col">
           <div className="flex-1 flex flex-col gap-3">
-            <div className="relative flex-1 bg-gray-900 rounded-2xl overflow-hidden min-h-[60vh]">
+            <div
+              className="relative flex-1 bg-gray-900 rounded-2xl overflow-hidden"
+              style={{ height: "min(45vh, 360px)" }} /* horizontal / compact preview */
+            >
               <video
                 ref={videoRef}
                 autoPlay
                 playsInline
                 muted
                 onCanPlay={handleVideoCanPlay}
+                onClick={handleVideoFocusTap}
                 style={{
                   width: "100%",
                   height: "100%",
                   display: "block",
-                  objectFit: "cover",
+                  objectFit: "contain", // show full frame, avoid tall cropping
+                  cursor: "crosshair",
                 }}
               />
 
@@ -543,6 +613,7 @@ function WaveformBarcodeV2() {
                   <li>Center the barcode inside the purple frame.</li>
                   <li>Hold your phone steady — auto-decode runs every 1.2s.</li>
                   <li>Rotate device so the bars are roughly vertical.</li>
+                  <li className="mt-1 text-xs">Tip: tap the preview to trigger focus (if supported)</li>
                 </ul>
               </div>
 
@@ -579,6 +650,34 @@ function WaveformBarcodeV2() {
           <canvas ref={scanCanvasRef} style={{ display: "none" }} />
 
           {error && <p className="text-red-500 text-sm">{error}</p>}
+
+          {/* Success banner shown when a valid barcode decoded */}
+          {decoded && decoded.valid && (mappedSong || mappedUrl) && (
+            <div className="p-3 rounded-lg bg-green-50 border border-green-200 flex items-center gap-3">
+              <div className="flex-shrink-0 w-12 h-12 bg-gray-100 rounded overflow-hidden">
+                {/* show thumbnail if available */}
+                {mappedSong && mappedSong.thumbnail ? (
+                  <img src={mappedSong.thumbnail} alt="thumbnail" className="w-full h-full object-cover" />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center text-gray-500">♪</div>
+                )}
+              </div>
+              <div className="flex-1">
+                <div className="font-semibold text-sm">Detected!</div>
+                <div className="text-xs text-gray-600">
+                  {mappedSong ? mappedSong.url : mappedUrl}
+                </div>
+              </div>
+              <a
+                href={mappedSong ? mappedSong.url : mappedUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="px-3 py-1 bg-green-600 text-white rounded text-sm"
+              >
+                Play
+              </a>
+            </div>
+          )}
 
           <div className="flex items-center gap-2 text-xs text-gray-600">
             <input
