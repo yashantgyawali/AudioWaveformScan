@@ -97,7 +97,7 @@ songLinks.forEach(({ id, url, thumbnail }) => {
   });
 });
 
-export const decodeCanvas = (canvas) => {
+export const decodeCanvas = (canvas, { smallMode = false } = {}) => {
   const ctx = canvas.getContext("2d");
   const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
   const data = imageData.data;
@@ -126,7 +126,9 @@ export const decodeCanvas = (canvas) => {
   const darkDiff = backgroundBrightness - minBrightness;
   const detectLightBars = lightDiff > darkDiff;
   const contrast = detectLightBars ? lightDiff : darkDiff;
-  if (contrast < 10) return { error: "Barcode contrast too low to detect" };
+  const minContrast = smallMode ? 6 : 10;
+  if (contrast < minContrast)
+    return { error: "Barcode contrast too low to detect" };
   const thresholdBase = detectLightBars
     ? backgroundBrightness + contrast * 0.45
     : backgroundBrightness - contrast * 0.45;
@@ -136,9 +138,10 @@ export const decodeCanvas = (canvas) => {
     return detectLightBars ? brightness >= threshold : brightness <= threshold;
   };
 
-  const scanLines = [0.4, 0.45, 0.5, 0.55, 0.6].map((r) =>
-    Math.floor(canvas.height * r)
-  );
+  const scanLines = (smallMode
+    ? [0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65]
+    : [0.4, 0.45, 0.5, 0.55, 0.6]
+  ).map((r) => Math.floor(canvas.height * r));
   let bestBars = [];
   for (const centerY of scanLines) {
     const bars = [];
@@ -152,7 +155,11 @@ export const decodeCanvas = (canvas) => {
       } else if (!inWave && inBar) {
         inBar = false;
         const barWidth = x - barStart;
-        if (barWidth >= 8) {
+        // For smallMode tolerate narrower bars, but still reject single-pixel noise
+        const minBarWidth = smallMode
+          ? Math.max(3, Math.floor(canvas.width / 400))
+          : 8;
+        if (barWidth >= minBarWidth) {
           const centerX = barStart + barWidth / 2;
           let topY = centerY,
             bottomY = centerY;
@@ -181,7 +188,20 @@ export const decodeCanvas = (canvas) => {
 };
 
 function WaveformBarcodeV2() {
-  const [mode, setMode] = useState("generate");
+  // lightweight routing fallback: derive mode from window.location and allow navigation
+  const modeFromPath = (path) => {
+    if (path.startsWith("/generate")) return "generate";
+    if (path.startsWith("/info")) return "info";
+    return "scan";
+  };
+  const [mode, setMode] = useState(modeFromPath(window.location.pathname));
+  const navigate = (path) => {
+    if (window.location.pathname !== path) {
+      window.history.pushState({}, "", path);
+      setMode(modeFromPath(path));
+    }
+  };
+
   const [mediaRef, setMediaRef] = useState("1234567890");
   const [heights, setHeights] = useState([]);
   const [decoded, setDecoded] = useState(null);
@@ -195,6 +215,7 @@ function WaveformBarcodeV2() {
   const [mappedUrl, setMappedUrl] = useState("");
   const [mappedSong, setMappedSong] = useState(null);
   const [cameraReady, setCameraReady] = useState(false);
+  const [smallBarcodeMode, setSmallBarcodeMode] = useState(false);
   const streamRef = useRef(null);
 
   const drawRoundedRect = (ctx, x, y, w, h, r) => {
@@ -242,10 +263,7 @@ function WaveformBarcodeV2() {
     drawHeights(result);
   }, [mediaRef, drawHeights]);
 
-  useEffect(() => {
-    generateBarcode();
-  }, []);
-
+  // stopScanning must be declared before effects that reference it
   const stopScanning = useCallback(() => {
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((t) => t.stop());
@@ -257,6 +275,21 @@ function WaveformBarcodeV2() {
     setScanning(false);
     setCameraReady(false);
   }, []);
+
+  // keep UI mode in sync with browser navigation (back/forward)
+  useEffect(() => {
+    const onPop = () => setMode(modeFromPath(window.location.pathname));
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+
+  useEffect(() => {
+    if (mode === "generate") generateBarcode();
+  }, [mode, generateBarcode]);
+
+  useEffect(() => {
+    if (mode !== "scan") stopScanning();
+  }, [mode, stopScanning]);
 
   const startScanning = async () => {
     setError("");
@@ -355,7 +388,7 @@ function WaveformBarcodeV2() {
     canvas.height = video.videoHeight;
     ctx.drawImage(video, 0, 0);
 
-    const result = decodeCanvas(canvas);
+    const result = decodeCanvas(canvas, { smallMode: smallBarcodeMode });
     if (result.error) {
       setError(result.error);
       setDecoded(null);
@@ -411,8 +444,8 @@ function WaveformBarcodeV2() {
           <button
             key={m}
             onClick={() => {
-              setMode(m);
-              if (m !== "scan") stopScanning();
+              const path = m === "scan" ? "/" : `/${m}`;
+              navigate(path);
             }}
             className={`px-4 py-2 rounded-lg font-medium capitalize ${
               mode === m ? "bg-black text-white" : "bg-gray-200"
@@ -515,6 +548,20 @@ function WaveformBarcodeV2() {
                     objectFit: "cover",
                   }}
                 />
+
+                {/* Scanner guidelines overlay — purely visual, does not affect capture */}
+                <div
+                  className="absolute left-4 top-4 bg-white/10 text-white p-3 rounded-lg max-w-xs backdrop-blur-sm"
+                  aria-hidden="true"
+                >
+                  <h4 className="font-semibold text-sm mb-1">Scanner Tips</h4>
+                  <ul className="text-xs list-disc pl-4 space-y-1">
+                    <li>Center the barcode inside the purple frame.</li>
+                    <li>Hold your phone steady — auto-decode runs every 1.2s.</li>
+                    <li>Rotate device so the bars are roughly vertical.</li>
+                  </ul>
+                </div>
+
                 {!cameraReady && (
                   <div className="absolute inset-0 flex items-center justify-center bg-gray-900">
                     <div className="text-white text-center space-y-3">
@@ -553,6 +600,19 @@ function WaveformBarcodeV2() {
           <canvas ref={scanCanvasRef} style={{ display: "none" }} />
 
           {error && <p className="text-red-500 text-sm">{error}</p>}
+
+          <div className="flex items-center gap-2 text-xs text-gray-600">
+            <input
+              id="small-barcode-mode"
+              type="checkbox"
+              checked={smallBarcodeMode}
+              onChange={(e) => setSmallBarcodeMode(e.target.checked)}
+              className="h-3 w-3"
+            />
+            <label htmlFor="small-barcode-mode">
+              Optimise scanner for small / tightly printed barcodes
+            </label>
+          </div>
 
           {decoded && (
             <div
